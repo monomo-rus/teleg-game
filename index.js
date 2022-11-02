@@ -1,5 +1,8 @@
 const TelegramApi = require('node-telegram-bot-api')
 const {gameOptions, againOptions} = require('./options')
+const sequelize = require('./db')
+const UserModel = require('./models')
+
 const token = '5780309014:AAETqPsuifjuBx9x9r1rUqeVjNlokMrU7Qs'
 
 const bot = new TelegramApi(token, {polling: true})
@@ -14,7 +17,15 @@ const startGame = async (chatId) => {
 }
 
 
-const start = () => {
+const start = async () => {
+    
+    try {
+        await sequelize.authenticate()
+        await sequelize.sync()
+    } catch (e) {
+        console.log('Подключение к БД сломалось', e)
+    }
+    
     bot.setMyCommands([
         {command: '/start', description: 'Начальное приветствие'},
         {command: '/info', description: 'Получить информацию о пользователе'},
@@ -24,17 +35,24 @@ const start = () => {
     bot.on('message', async msg => {
         const text = msg.text;
         const chatId = msg.chat.id;
-        if (text === '/start') {
-            await bot.sendSticker(chatId, 'https://chpic.su/_data/stickers/c/clothess_inside/clothess_inside_010.webp')
-            return bot.sendMessage(chatId, `Приветствую тебя в телеграм боте`)
+
+        try {
+            if (text === '/start') {
+                await UserModel.create({chatId})
+                await bot.sendSticker(chatId, 'https://chpic.su/_data/stickers/c/clothess_inside/clothess_inside_010.webp')
+                return bot.sendMessage(chatId, `Приветствую тебя в телеграм боте`)
+            }
+            if (text === '/info') {
+                const user = await UserModel.findOne({chatId})
+                return bot.sendMessage(chatId, `Тебя зовут ${msg.from.first_name} ${msg.from.last_name}, в игре у тебя ${user.right} правильных ответов и ${user.wrong} неправильных`)
+            }
+            if (text === '/game') {
+                return startGame(chatId)
+            }
+            return bot.sendMessage(chatId, 'Я тебя не понимаю, попробуй еще раз!')
+        } catch (e) {
+            return bot.sendMessage(chatId, 'Произошла невиданная херь, аааадмииин?!')
         }
-        if (text === '/info') {
-            return bot.sendMessage(chatId, `Тебя зовут ${msg.from.first_name} ${msg.from.last_name}`)
-        }
-        if (text === '/game') {
-            return startGame(chatId)
-        }
-        return bot.sendMessage(chatId, 'Я тебя не понимаю, попробуй еще раз!')
     })
 
     bot.on('callback_query', async msg => {
@@ -43,11 +61,17 @@ const start = () => {
         if (data === '/again') {
             return startGame(chatId)
         }
-        if (data === chats[chatId]) {
-            return bot.sendMessage(chatId, `Нууу, ты отгадал. ${chats[chatId]} - это то что я загадал`, againOptions)
+
+        const user = await UserModel.findOne({chatId})
+
+        if (data == chats[chatId]) {
+            user.right += 1;
+            await bot.sendMessage(chatId, `Нууу, ты отгадал. ${chats[chatId]} - это то что я загадал`, againOptions)
         } else {
-            return bot.sendMessage(chatId, `Ты не угадал, я загадывал ${chats[chatId]}`, againOptions)
+            user.wrong += 1;
+            await bot.sendMessage(chatId, `Ты не угадал, я загадывал ${chats[chatId]}`, againOptions)
         }
+        await user.save();
 
     })
 
